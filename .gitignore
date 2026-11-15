@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.db
+*.db-*
+*.log
+ADAM-RUN-concept/
+ADAM-RUN-MVP-design/
+ADAM_RUN_TZ_MVP_1_1.docx
+artifacts/
