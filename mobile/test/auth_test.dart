@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:adam_run/core/api.dart';
@@ -40,6 +41,41 @@ final user = {
   'step_goal': 8000,
 };
 void main() {
+  test(
+    'Hosting HTML errors remain readable and requests are not replayed',
+    () async {
+      var requests = 0;
+      final api = Api(
+        store: MemoryStore(),
+        base: 'https://example.com',
+        client: MockClient((_) async {
+          requests++;
+          return http.Response('<html>Starting service</html>', 503);
+        }),
+      );
+      await expectLater(
+        api.requestCode('runner@example.com'),
+        throwsA(isA<ApiException>().having((e) => e.status, 'status', 503)),
+      );
+      expect(requests, 1);
+    },
+  );
+  test('Timeout also bounds delivery of the response body', () async {
+    final body = StreamController<List<int>>();
+    final api = Api(
+      store: MemoryStore(),
+      base: 'https://example.com',
+      requestTimeout: const Duration(milliseconds: 20),
+      client: MockClient.streaming(
+        (_, _) async => http.StreamedResponse(body.stream, 200),
+      ),
+    );
+    await expectLater(
+      api.requestCode('runner@example.com'),
+      throwsA(isA<ApiException>()),
+    );
+    await body.close();
+  });
   testWidgets(
     'Registration requires email/name; only verified server response opens home',
     (tester) async {

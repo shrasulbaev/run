@@ -1,0 +1,27 @@
+# Explicitly free API; persistent database is provisioned separately in Neon Free.
+services:
+  - type: web
+    name: adam-run-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    repo: https://github.com/shrasulbaev/run
+    branch: codex/adam-run-mvp
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeployTrigger: off
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.7
+      - key: APP_ENV
+        value: demo
+      - key: TEST_AUTH_ENABLED
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        value: "[]"

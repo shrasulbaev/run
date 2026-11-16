@@ -50,13 +50,18 @@ class Api {
   final http.Client client;
   final TokenStore store;
   final String base;
+  final Duration requestTimeout;
   Map<String, dynamic>? session;
   Future<void>? _refreshing;
   VoidCallback? onSessionExpired;
-  Api({http.Client? client, TokenStore? store, String? base})
-    : client = client ?? http.Client(),
-      store = store ?? SecureTokenStore(),
-      base = base ?? defaultBase;
+  Api({
+    http.Client? client,
+    TokenStore? store,
+    String? base,
+    this.requestTimeout = const Duration(seconds: 90),
+  }) : client = client ?? http.Client(),
+       store = store ?? SecureTokenStore(),
+       base = base ?? defaultBase;
   Profile? get cachedProfile =>
       session?['user'] == null ? null : Profile.fromJson(session!['user']);
 
@@ -74,9 +79,12 @@ class Api {
         request.headers['Authorization'] = 'Bearer ${session!['access_token']}';
       }
       if (body != null) request.body = jsonEncode(body);
-      final response = await http.Response.fromStream(
-        await client.send(request).timeout(const Duration(seconds: 15)),
-      );
+      // The free hosting service may need a minute to wake from idle. Bound
+      // the complete response, including body delivery; never replay POSTs.
+      final response = await client
+          .send(request)
+          .then(http.Response.fromStream)
+          .timeout(requestTimeout);
       if (response.statusCode == 401 &&
           authorized &&
           retry &&
@@ -93,14 +101,23 @@ class Api {
         );
       }
       if (response.statusCode >= 400) {
-        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        dynamic decoded;
+        try {
+          decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        } on FormatException {
+          // A hosting gateway may respond with an HTML error page.
+        }
         final detail = decoded is Map ? decoded['detail'] : null;
         if (response.statusCode == 401 && authorized) {
           await clear();
           onSessionExpired?.call();
         }
         throw ApiException(
-          detail is String ? detail : 'Проверьте введённые данные',
+          detail is String
+              ? detail
+              : response.statusCode >= 500
+              ? 'Сервер запускается или временно недоступен. Повторите через минуту.'
+              : 'Проверьте введённые данные',
           response.statusCode,
         );
       }
@@ -108,7 +125,11 @@ class Api {
           ? {}
           : jsonDecode(utf8.decode(response.bodyBytes));
     } on TimeoutException {
-      throw const ApiException('Сервер не отвечает. Попробуйте ещё раз.');
+      throw const ApiException(
+        'Сервер не успел запуститься. Повторите через минуту.',
+      );
+    } on FormatException {
+      throw const ApiException('Сервер ещё не готов. Повторите через минуту.');
     } on http.ClientException {
       throw const ApiException('Нет связи с сервером. Проверьте подключение.');
     }

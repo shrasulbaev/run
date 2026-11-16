@@ -73,3 +73,21 @@ def test_resend_invalidates_old_code_and_rate_limits(client):
 def test_fixed_code_cannot_start_in_production():
     with pytest.raises(RuntimeError, match='forbidden'):
         create_app(Settings(app_env='production', test_auth_enabled=True))
+
+
+def test_hosted_demo_requires_secret_and_persistent_database():
+    with pytest.raises(RuntimeError, match='JWT_SECRET'):
+        Settings(app_env='demo').runtime_database_url()
+    with pytest.raises(RuntimeError, match='PostgreSQL'):
+        Settings(app_env='demo', jwt_secret='s' * 48).runtime_database_url()
+    url = Settings(app_env='demo', jwt_secret='s' * 48,
+                   database_url='postgresql://runner:password@host/adam?channel_binding=require').runtime_database_url()
+    assert url.drivername == 'postgresql+psycopg'
+    assert url.query['sslmode'] == 'require'
+    assert url.query['channel_binding'] == 'require'
+
+
+def test_health_checks_database_and_identifies_demo_status(client):
+    health = client.get('/health')
+    assert health.status_code == 200
+    assert health.json() == {'status': 'ok', 'test_auth': True, 'environment': 'test'}

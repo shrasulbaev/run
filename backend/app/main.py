@@ -1,4 +1,4 @@
-"""ADAM RUN development API. The fixed OTP can never run in production."""
+"""ADAM RUN API. Fixed OTP is explicit demo functionality, never production auth."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -6,6 +6,7 @@ from hashlib import sha256
 import hmac
 import secrets
 import uuid
+from typing import Literal
 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -15,15 +16,33 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Boolean, DateTime, Integer, String, create_engine, func, select, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.engine import make_url
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
-    app_env: str = 'development'
+    app_env: Literal['development', 'test', 'demo', 'production'] = 'development'
     test_auth_enabled: bool = True
     database_url: str = 'sqlite:///./adam_run.db'
     jwt_secret: str = 'local-development-only-change-before-sharing'
     cors_origins: list[str] = ['http://localhost:7357', 'http://127.0.0.1:7357']
+
+    def runtime_database_url(self):
+        if self.app_env == 'production' and self.test_auth_enabled:
+            raise RuntimeError('Fixed test OTP is forbidden in production')
+        if self.app_env in {'demo', 'production'} and (
+            len(self.jwt_secret) < 32 or self.jwt_secret.startswith('local-')
+        ):
+            raise RuntimeError('Configure a strong JWT_SECRET for hosted environments')
+        url = make_url(self.database_url)
+        if url.drivername in {'postgres', 'postgresql'}:
+            url = url.set(drivername='postgresql+psycopg')
+        if self.app_env in {'demo', 'production'}:
+            if url.get_backend_name() != 'postgresql':
+                raise RuntimeError('Hosted environments require persistent PostgreSQL')
+            if 'sslmode' not in url.query:
+                url = url.update_query_dict({'sslmode': 'require'})
+        return url
 
 
 class Base(DeclarativeBase):
@@ -100,11 +119,14 @@ class GoalInput(BaseModel):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings or Settings()
-    if cfg.app_env not in {'development', 'test'} and cfg.test_auth_enabled:
-        raise RuntimeError('Fixed test OTP is forbidden outside development/test')
-    if cfg.app_env not in {'development', 'test'} and cfg.jwt_secret.startswith('local-'):
-        raise RuntimeError('Configure a strong JWT_SECRET')
-    engine = create_engine(cfg.database_url, connect_args={'check_same_thread': False} if cfg.database_url.startswith('sqlite') else {})
+    database_url = cfg.runtime_database_url()
+    sqlite = database_url.get_backend_name() == 'sqlite'
+    engine = create_engine(
+        database_url,
+        connect_args={'check_same_thread': False} if sqlite else {'connect_timeout': 15},
+        pool_pre_ping=True,
+        **({} if sqlite else {'pool_size': 2, 'max_overflow': 3, 'pool_recycle': 300}),
+    )
     Base.metadata.create_all(engine)
     sessions = sessionmaker(engine, expire_on_commit=False)
     app = FastAPI(title='ADAM RUN', version='0.1.0')
@@ -148,7 +170,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get('/health')
     def health():
-        return {'status': 'ok', 'test_auth': cfg.test_auth_enabled}
+        with engine.connect() as connection:
+            connection.execute(select(1))
+        return {'status': 'ok', 'test_auth': cfg.test_auth_enabled, 'environment': cfg.app_env}
 
     @app.post('/auth/request-code')
     def request_code(body: EmailInput, request: Request, session: Session = Depends(db)):

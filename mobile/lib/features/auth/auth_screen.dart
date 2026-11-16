@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -18,9 +20,12 @@ class _AuthScreenState extends State<AuthScreen> {
       _name = TextEditingController(),
       _code = TextEditingController();
   bool _register = true, _busy = false;
+  bool _slowRequest = false;
+  Timer? _waitTimer;
   String? _challenge, _error;
   @override
   void dispose() {
+    _waitTimer?.cancel();
     _email.dispose();
     _name.dispose();
     _code.dispose();
@@ -31,7 +36,11 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!_form.currentState!.validate() || _busy) return;
     setState(() {
       _busy = true;
+      _slowRequest = false;
       _error = null;
+    });
+    _waitTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && _busy) setState(() => _slowRequest = true);
     });
     try {
       if (_challenge == null) {
@@ -54,6 +63,7 @@ class _AuthScreenState extends State<AuthScreen> {
         );
       }
     } finally {
+      _waitTimer?.cancel();
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -170,6 +180,13 @@ class _AuthScreenState extends State<AuthScreen> {
                         : Text(_challenge != null ? 'Войти' : 'Получить код'),
                   ),
                   const SizedBox(height: 12),
+                  if (_busy && _slowRequest) ...[
+                    const Text(
+                      'Сервер запускается после паузы. Первый вход может занять около минуты.',
+                      style: TextStyle(color: AdamTheme.muted, fontSize: 12),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   Center(
                     child: TextButton(
                       onPressed: _busy
