@@ -1,5 +1,12 @@
 # Размещение тестового ADAM RUN и APK
 
+Развёрнутый API: **https://adam-run-api.onrender.com**. Проверка: [GET /health](https://adam-run-api.onrender.com/health).
+
+- Render: `srv-dbtbauoae00c73a891og`, рабочее пространство `My Workspace`, план `free`.
+- Neon: проект `floral-cell-25806544` / `adam-run-demo`, организация `Shera`, план `free`.
+- Серверный код: коммит `11ec2d9`. Публикация Render `dep-dbtbav0ae00c73a892q0` завершилась со статусом `live` 16 ноября 2026.
+- Проверка через интернет прошла: health, неверный и повторный OTP, регистрация `00000`, сохранение цели, ротация токенов и выход.
+
 Сервер: Render Free, база: Neon Free PostgreSQL 17 во Франкфурте. Конфигурация для повторного размещения находится в `render.yaml`. Для создания через Render API без поддержки rootDir команды начинаются с `cd backend &&`. Автоматический деплой выключен: обновления публикуются явно после проверок.
 
 Переменные сервера:
@@ -21,10 +28,12 @@ python3 scripts/smoke_api.py https://<адрес-сервера>
 
 ```sh
 python3 scripts/create_android_signing.py
-python3 scripts/build_android_release.py --api-url https://<адрес-сервера>
+python3 scripts/build_android_release.py --api-url https://adam-run-api.onrender.com
 ```
 
 `--flutter /полный/путь/flutter` задаёт Flutter, если он отсутствует в PATH. Сборка проверяет доступность реального HTTPS API и создаёт `artifacts/adam-run-1.0.0-demo.apk` и SHA-256. В APK включается только публичный адрес сервера; серверные секреты туда не попадают.
+
+Сборка запускает `pub get`: Flutter должен обновить регистрацию плагинов для release, исключив `integration_test`. Не заменять эту команду на `--no-pub` после отладочных/интеграционных запусков.
 
 Сохранить резервную копию `mobile/android/key.properties` и `mobile/android/keystore/adam-run-release.jks` в защищённом месте. Они исключены из Git, права файлов — 0600. Следующие обновления нужно подписывать тем же ключом. Если раньше была установлена debug-сборка, перед установкой release требуется удалить её из-за другого сертификата; локальные результаты при удалении потеряются.
 

@@ -35,7 +35,7 @@ with urlopen(api_url + '/health', timeout=120) as response:
 if health.get('status') != 'ok' or health.get('environment') != 'demo' or health.get('test_auth') is not True:
     parser.error('The endpoint is not the healthy ADAM RUN demo API.')
 subprocess.run([
-    args.flutter, 'build', 'apk', '--release', '--no-pub',
+    args.flutter, 'build', 'apk', '--release',
     '--build-number=2', f'--dart-define=API_BASE_URL={api_url}',
 ], cwd=root / 'mobile', check=True)
 output = root / 'artifacts/adam-run-1.0.0-demo.apk'
