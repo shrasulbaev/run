@@ -60,7 +60,35 @@ void main() {
       await tester.tap(find.text('Walk Quest'));
       await tester.pumpAndSettle();
       expect(find.text('Городская птица'), findsOneWidget);
+      await tester.tap(find.text('Рейтинги'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('ГОРОД В ДВИЖЕНИИ'), findsOneWidget);
+      await tester.tap(find.text('Профиль'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('ТВОЙ ПРОФИЛЬ'), findsOneWidget);
+      await tester.tap(find.text('Редактировать профиль'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'QA Updated');
+      await tester.ensureVisible(find.text('Сохранить'));
+      await tester.tap(find.text('Сохранить'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 2));
+      expect((await api.profile()).nickname, 'QA Updated');
+      await tester.tap(find.text('Главная'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byTooltip('Развернуть карту'));
+      await tester.tap(find.byTooltip('Развернуть карту'));
+      await tester.pumpAndSettle();
+      expect(find.text('Карта Бишкека доступна без интернета'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      if (const bool.fromEnvironment('QA_HOLD')) {
+        debugPrint('QA_MAP_READY');
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(seconds: 40)),
+        );
+      }
     },
   );
 }

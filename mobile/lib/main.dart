@@ -1,11 +1,10 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/api.dart';
+import 'core/offline_map.dart';
 import 'core/theme.dart';
 import 'features/activity/route_model.dart';
 import 'features/auth/auth_screen.dart';
@@ -56,9 +55,7 @@ class _AdamAppState extends State<AdamApp> {
     try {
       _routes = await RunRoute.load();
       stage = 'map';
-      _city = jsonDecode(
-        await rootBundle.loadString('assets/maps/bishkek.geojson'),
-      );
+      _city = await OfflineMap.load();
       stage = 'preferences';
       _prefs = await SharedPreferences.getInstance();
       stage = 'session';

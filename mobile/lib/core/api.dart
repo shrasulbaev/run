@@ -14,13 +14,18 @@ class ApiException implements Exception {
 }
 
 class Profile {
-  final String id, email, nickname;
+  final String id, email, phone, nickname, city, bio;
+  final String? avatarVersion;
   final int goal;
   Profile.fromJson(Map<String, dynamic> j)
     : id = j['id'],
-      email = j['email'],
+      email = j['email'] ?? '',
+      phone = j['phone'] ?? '',
       nickname = j['nickname'],
-      goal = j['step_goal'];
+      goal = j['step_goal'],
+      city = j['city'] ?? 'Бишкек',
+      bio = j['bio'] ?? '',
+      avatarVersion = j['avatar_version'];
 }
 
 abstract interface class TokenStore {
@@ -170,11 +175,15 @@ class Api {
     }
   }
 
-  Future<String> requestCode(String email) async => (await _send(
-    'POST',
-    '/auth/request-code',
-    body: {'email': email.trim()},
-  ))['challenge_id'];
+  Future<String> requestCode(String email, {bool phone = false}) async =>
+      (await _send(
+        'POST',
+        '/auth/request-code',
+        body: {
+          'identifier': email.trim(),
+          'channel': phone ? 'phone' : 'email',
+        },
+      ))['challenge_id'];
   Future<Profile> verify(
     String challenge,
     String code,
@@ -207,6 +216,40 @@ class Api {
       body: {'step_goal': goal},
       authorized: true,
     );
+    session!['user'] = data;
+    await store.write(jsonEncode(session));
+    return Profile.fromJson(data);
+  }
+
+  Future<Map<String, dynamic>> getData(String path) =>
+      _send('GET', path, authorized: true);
+  Future<Map<String, dynamic>> postData(
+    String path,
+    Map<String, dynamic> body,
+  ) => _send('POST', path, body: body, authorized: true);
+  Map<String, String> get photoHeaders => {
+    'Authorization': 'Bearer ${session?['access_token']}',
+  };
+  String photoUrl(String id, String version) =>
+      '$base/users/$id/photo?v=$version';
+  Future<Profile> editProfile(String nickname, String city, String bio) async {
+    final data = await _send(
+      'PATCH',
+      '/me/profile',
+      authorized: true,
+      body: {'nickname': nickname, 'city': city, 'bio': bio},
+    );
+    return _saveProfile(data);
+  }
+
+  Future<Profile> photo(Uint8List? bytes) async {
+    final data = await postData('/me/photo', {
+      'image_base64': bytes == null ? null : base64Encode(bytes),
+    });
+    return _saveProfile(data);
+  }
+
+  Future<Profile> _saveProfile(Map<String, dynamic> data) async {
     session!['user'] = data;
     await store.write(jsonEncode(session));
     return Profile.fromJson(data);

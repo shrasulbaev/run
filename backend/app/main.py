@@ -12,7 +12,7 @@ import jwt
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, TypeAdapter
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import Boolean, DateTime, Integer, String, create_engine, func, select, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -45,36 +45,8 @@ class Settings(BaseSettings):
         return url
 
 
-class Base(DeclarativeBase):
-    pass
-
-
-class User(Base):
-    __tablename__ = 'users'
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
-    nickname: Mapped[str] = mapped_column(String(32))
-    step_goal: Mapped[int] = mapped_column(Integer, default=8000)
-
-
-class Challenge(Base):
-    __tablename__ = 'auth_challenges'
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    email: Mapped[str] = mapped_column(String(254), index=True)
-    ip_hash: Mapped[str] = mapped_column(String(64), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    used: Mapped[bool] = mapped_column(Boolean, default=False)
-
-
-class LoginSession(Base):
-    __tablename__ = 'login_sessions'
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(36), index=True)
-    refresh_hash: Mapped[str] = mapped_column(String(64), unique=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
-    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+from .storage import Base, User, Challenge, LoginSession, Identity
+from .features import register_features, profile_data
 
 
 def now() -> datetime:
@@ -86,12 +58,25 @@ def digest(value: str) -> str:
 
 
 class EmailInput(BaseModel):
-    email: EmailStr
+    email: str | None = None
+    phone: str | None = None
+    identifier: str | None = None
+    channel: Literal['email', 'phone'] | None = None
 
-    @field_validator('email')
-    @classmethod
-    def normalize(cls, value: str) -> str:
-        return value.strip().lower()
+    @model_validator(mode='after')
+    def normalize(self):
+        import re
+        value = (self.identifier or self.phone or self.email or '').strip()
+        kind = self.channel or ('phone' if self.phone or value.startswith('+') else 'email')
+        if kind == 'phone':
+            value = re.sub(r'[\s()\-]', '', value)
+            if not re.fullmatch(r'\+[1-9][0-9]{7,14}', value):
+                raise ValueError('Номер с кодом страны, например +996700123456')
+        else:
+            value = str(TypeAdapter(EmailStr).validate_python(value)).lower()
+        self.email = value
+        self.channel = kind
+        return self
 
 
 class VerifyInput(BaseModel):
@@ -154,7 +139,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(401, 'Сессия истекла. Войдите снова.')
 
     def profile(user: User) -> dict:
-        return {'id': user.id, 'email': user.email, 'nickname': user.nickname, 'step_goal': user.step_goal, 'city': 'Бишкек'}
+        with sessions() as session:
+            return profile_data(user, session)
 
     def tokens(user: User, login: LoginSession, refresh: str) -> dict:
         expires = datetime.now(timezone.utc) + timedelta(minutes=15)
@@ -204,13 +190,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session.commit()
             raise HTTPException(400, 'Неверный код')
         challenge.used = True
-        user = session.scalar(select(User).where(User.email == challenge.email))
+        identity = session.get(Identity, challenge.email)
+        user = session.get(User, identity.user_id) if identity else session.scalar(select(User).where(User.email == challenge.email))
         if not user:
             if not body.nickname:
                 session.rollback()
                 raise HTTPException(422, 'Для регистрации укажите никнейм')
-            user = User(id=str(uuid.uuid4()), email=challenge.email, nickname=body.nickname, step_goal=8000)
+            uid = str(uuid.uuid4())
+            user = User(id=uid, email=challenge.email if '@' in challenge.email else f'phone-{uid}@adam-run.invalid', nickname=body.nickname, step_goal=8000)
             session.add(user)
+        session.flush()
+        if not identity:
+            session.add(Identity(identifier=challenge.email, user_id=user.id, kind='email' if '@' in challenge.email else 'phone'))
         refresh = secrets.token_urlsafe(48)
         login = LoginSession(id=str(uuid.uuid4()), user_id=user.id, refresh_hash=digest(refresh), expires_at=now() + timedelta(days=30), revoked=False)
         session.add(login)
@@ -246,6 +237,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.commit()
         return profile(user)
 
+    register_features(app, db, me, now)
     return app
 
 

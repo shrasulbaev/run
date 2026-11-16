@@ -1,0 +1,10 @@
+Bishkek offline extract, 2026-11-17
+Data © OpenStreetMap contributors, https://www.openstreetmap.org/copyright
+OpenStreetMap data is available under the Open Database License (ODbL) 1.0:
+https://opendatacommons.org/licenses/odbl/1-0/
+Vector schema © OpenMapTiles, https://openmaptiles.org/
+Tiles supplied by OpenFreeMap, https://openfreemap.org/
+358 vector tiles, zooms 8–14, bounds [74.42, 42.77, 74.80, 42.97].
+At larger zooms the z14 geometry is overscaled; detail outside the extract is unavailable offline.
+Source and reproducible download instructions are in offline_manifest.json and scripts/download_offline_map.py.
+Noto Sans glyphs: SIL Open Font License 1.1, see assets/fonts/Noto-OFL.txt.

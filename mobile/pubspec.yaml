@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+2
+version: 1.1.0+3
 
 environment:
   sdk: ^3.13.4
@@ -40,6 +40,8 @@ dependencies:
   shared_preferences: ^2.5.6
   geolocator: ^14.1.2
   intl: ^0.20.3
+  image_picker: ^1.2.4
+  path_provider: ^2.1.5
 
 dev_dependencies:
   integration_test:
@@ -66,6 +68,52 @@ flutter:
   uses-material-design: true
   assets:
     - assets/maps/
+    - assets/maps/offline/10/723/
+    - assets/maps/offline/10/724/
+    - assets/maps/offline/11/1447/
+    - assets/maps/offline/11/1448/
+    - assets/maps/offline/11/1449/
+    - assets/maps/offline/12/2894/
+    - assets/maps/offline/12/2895/
+    - assets/maps/offline/12/2896/
+    - assets/maps/offline/12/2897/
+    - assets/maps/offline/12/2898/
+    - assets/maps/offline/12/2899/
+    - assets/maps/offline/13/5789/
+    - assets/maps/offline/13/5790/
+    - assets/maps/offline/13/5791/
+    - assets/maps/offline/13/5792/
+    - assets/maps/offline/13/5793/
+    - assets/maps/offline/13/5794/
+    - assets/maps/offline/13/5795/
+    - assets/maps/offline/13/5796/
+    - assets/maps/offline/13/5797/
+    - assets/maps/offline/13/5798/
+    - assets/maps/offline/14/11578/
+    - assets/maps/offline/14/11579/
+    - assets/maps/offline/14/11580/
+    - assets/maps/offline/14/11581/
+    - assets/maps/offline/14/11582/
+    - assets/maps/offline/14/11583/
+    - assets/maps/offline/14/11584/
+    - assets/maps/offline/14/11585/
+    - assets/maps/offline/14/11586/
+    - assets/maps/offline/14/11587/
+    - assets/maps/offline/14/11588/
+    - assets/maps/offline/14/11589/
+    - assets/maps/offline/14/11590/
+    - assets/maps/offline/14/11591/
+    - assets/maps/offline/14/11592/
+    - assets/maps/offline/14/11593/
+    - assets/maps/offline/14/11594/
+    - assets/maps/offline/14/11595/
+    - assets/maps/offline/14/11596/
+    - assets/maps/offline/8/180/
+    - assets/maps/offline/8/181/
+    - assets/maps/offline/9/361/
+    - assets/maps/offline/9/362/
+    - assets/maps/offline/fonts/Noto Sans Regular/
+    - assets/fonts/Noto-OFL.txt
     - assets/fonts/Oswald-OFL.txt
   fonts:
     - family: Oswald

@@ -13,6 +13,12 @@
 - [Android: датчики движения](https://developer.android.com/develop/sensors-and-location/sensors/sensors_motion)
 - [MapLibre Flutter](https://pub.dev/packages/maplibre_gl)
 
-Health Connect агрегирует шаги; приложение не складывает их с аппаратным счётчиком. Приоритет всегда у одного источника. Разрешение на точную геолокацию запрашивается при старте маршрута, а разрешение на шаги — по отдельной кнопке на главной.
+В версии 1.1 Android использует только аппаратный TYPE_STEP_COUNTER; Health Connect не запрашивается. Разрешение на точную геолокацию запрашивается при старте маршрута, а разрешение на шаги — по отдельной кнопке на главной.
 
 MapLibre GL JS 5.6.2 хранится в `mobile/web/vendor`; лицензия включена рядом. Исходный пакет: https://www.npmjs.com/package/maplibre-gl/v/5.6.2.
+
+## Карта версии 1.1
+
+В поставке используются векторные тайлы [OpenFreeMap](https://openfreemap.org/quick_start/) в схеме OpenMapTiles: 358 тайлов, z8–14, 9 МБ передано, bbox [74.42,42.77,74.80,42.97]. Сборщик `scripts/download_offline_map.py` соблюдает лимиты провайдера: не более 4 одновременных запросов, уникальный User-Agent, менее 3000 тайлов/50 МБ. Манифест содержит исходный URL и SHA-256 каждого файла. Файлы копируются в приватную папку приложения и читаются MapLibre без сети. Веб-версия читает те же файлы с локального хоста.
+
+Названия: Noto Sans Regular, [SIL OFL](https://github.com/googlefonts/noto-fonts/blob/main/LICENSE), лицензия включена в assets/fonts/Noto-OFL.txt. Атрибуция OSM/OpenMapTiles/OpenFreeMap доступна на карте; MAP_NOTICE.txt включён в APK. Старый GeoJSON центра оставлен как исходный материал и больше не используется для отображения карты.

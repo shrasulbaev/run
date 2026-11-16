@@ -27,6 +27,22 @@ abstract final class AdamTheme {
       onSurface: Color(0xFFF5F6F7),
     ),
     useMaterial3: true,
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: background,
+      indicatorColor: orange.withValues(alpha: .16),
+      iconTheme: WidgetStateProperty.resolveWith(
+        (states) => IconThemeData(
+          color: states.contains(WidgetState.selected) ? orange : muted,
+        ),
+      ),
+      labelTextStyle: WidgetStateProperty.resolveWith(
+        (states) => TextStyle(
+          fontSize: 12,
+          color: states.contains(WidgetState.selected) ? orange : muted,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ),
     textTheme: const TextTheme(
       bodyMedium: TextStyle(fontSize: 14, height: 1.4),
     ),

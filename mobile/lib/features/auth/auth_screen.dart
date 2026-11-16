@@ -19,7 +19,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _email = TextEditingController(),
       _name = TextEditingController(),
       _code = TextEditingController();
-  bool _register = true, _busy = false;
+  bool _register = true, _busy = false, _phone = false;
   bool _slowRequest = false;
   Timer? _waitTimer;
   String? _challenge, _error;
@@ -44,7 +44,7 @@ class _AuthScreenState extends State<AuthScreen> {
     });
     try {
       if (_challenge == null) {
-        final id = await widget.api.requestCode(_email.text);
+        final id = await widget.api.requestCode(_email.text, phone: _phone);
         if (mounted) setState(() => _challenge = id);
       } else {
         final user = await widget.api.verify(
@@ -105,6 +105,29 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                   const SizedBox(height: 28),
                   if (_challenge == null) ...[
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(
+                          value: false,
+                          label: Text('Почта'),
+                          icon: Icon(Icons.alternate_email),
+                        ),
+                        ButtonSegment(
+                          value: true,
+                          label: Text('Телефон'),
+                          icon: Icon(Icons.phone_outlined),
+                        ),
+                      ],
+                      selected: {_phone},
+                      onSelectionChanged: _busy
+                          ? null
+                          : (v) => setState(() {
+                              _phone = v.first;
+                              _email.text = _phone ? '+996' : '';
+                              _error = null;
+                            }),
+                    ),
+                    const SizedBox(height: 20),
                     if (_register) ...[
                       TextFormField(
                         controller: _name,
@@ -124,17 +147,31 @@ class _AuthScreenState extends State<AuthScreen> {
                     TextFormField(
                       controller: _email,
                       enabled: !_busy,
-                      keyboardType: TextInputType.emailAddress,
-                      autofillHints: const [AutofillHints.email],
+                      keyboardType: _phone
+                          ? TextInputType.phone
+                          : TextInputType.emailAddress,
+                      autofillHints: [
+                        _phone
+                            ? AutofillHints.telephoneNumber
+                            : AutofillHints.email,
+                      ],
                       autocorrect: false,
-                      decoration: const InputDecoration(
-                        labelText: 'Email',
-                        prefixIcon: Icon(Icons.alternate_email),
+                      decoration: InputDecoration(
+                        labelText: _phone ? 'Телефон с кодом страны' : 'Email',
+                        prefixIcon: Icon(
+                          _phone ? Icons.phone_outlined : Icons.alternate_email,
+                        ),
                       ),
                       validator: (v) =>
-                          RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
-                              .hasMatch(v?.trim() ?? '')
+                          (_phone
+                              ? RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(
+                                  (v ?? '').replaceAll(RegExp(r'[\s()\-]'), ''),
+                                )
+                              : RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+                                    .hasMatch(v?.trim() ?? ''))
                           ? null
+                          : _phone
+                          ? 'Например, +996700123456'
                           : 'Введите корректный email',
                       onFieldSubmitted: (_) => _submit(),
                     ),
@@ -202,7 +239,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             }),
                       child: Text(
                         _challenge != null
-                            ? 'Изменить email / запросить новый код'
+                            ? 'Изменить контакт / новый код'
                             : _register
                             ? 'Уже есть аккаунт? Войти'
                             : 'Создать аккаунт',
@@ -226,7 +263,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            'Тестовый вход · код 00000\nПисьмо пока не отправляется.',
+                            'Тестовый вход · код 00000\nSMS и письма пока не отправляются.',
                             style: TextStyle(
                               color: AdamTheme.muted,
                               fontSize: 12,

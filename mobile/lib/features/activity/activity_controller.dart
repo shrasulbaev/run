@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
+
+import '../../core/api.dart';
 
 import 'package:flutter/widgets.dart';
 import 'package:geolocator/geolocator.dart';
@@ -11,6 +14,101 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
   final List<RunRoute> routes;
   final SharedPreferences prefs;
   final String userId;
+  final Api? api;
+  double heading = 0;
+  String? attemptId;
+  DateTime? startedAt;
+  List<Map<String, dynamic>> _trace = [];
+  bool _syncing = false;
+  String? syncMessage;
+  String _uuid() {
+    final r = math.Random.secure();
+    final b = List.generate(16, (_) => r.nextInt(256));
+    b[6] = (b[6] & 15) | 64;
+    b[8] = (b[8] & 63) | 128;
+    final h = b.map((v) => v.toRadixString(16).padLeft(2, '0')).join();
+    return '${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}';
+  }
+
+  void _record(Position fix) {
+    if (_trace.isNotEmpty &&
+        fix.timestamp.millisecondsSinceEpoch <= _trace.last['time_ms']) {
+      return;
+    }
+    if (_trace.length >= 5000) {
+      message =
+          'Слишком длинная запись. Рейтинг для этого прохождения недоступен.';
+      attemptId = null;
+      return;
+    }
+    if (fix.heading.isFinite && fix.heading >= 0 && fix.speed > .5) {
+      heading = fix.heading;
+    } else if (active != null && progress != null) {
+      final target = active!
+          .samples[math.min(progress!.index + 1, active!.samples.length - 1)];
+      final lat = fix.latitude * math.pi / 180,
+          other = target.lat * math.pi / 180,
+          delta = (target.lon - fix.longitude) * math.pi / 180;
+      heading =
+          (math.atan2(
+                    math.sin(delta) * math.cos(other),
+                    math.cos(lat) * math.sin(other) -
+                        math.sin(lat) * math.cos(other) * math.cos(delta),
+                  ) *
+                  180 /
+                  math.pi +
+              360) %
+          360;
+    }
+    _trace.add({
+      'lat': fix.latitude,
+      'lon': fix.longitude,
+      'accuracy': fix.accuracy,
+      'time_ms': fix.timestamp.millisecondsSinceEpoch,
+      'mocked': fix.isMocked,
+    });
+  }
+
+  Future<void> sync() async {
+    if (api == null || _syncing) return;
+    _syncing = true;
+    try {
+      final pending =
+          (jsonDecode(prefs.getString('pending.$userId') ?? '[]') as List);
+      for (final entry in pending.toList()) {
+        try {
+          await api!.postData('/activities', Map<String, dynamic>.from(entry));
+          final latest =
+              jsonDecode(prefs.getString('pending.$userId') ?? '[]') as List;
+          latest.removeWhere((p) => p['id'] == entry['id']);
+          await prefs.setString('pending.$userId', jsonEncode(latest));
+          syncMessage =
+              'Результат синхронизирован. Профиль и рейтинг обновлены.';
+        } on ApiException catch (e) {
+          if (e.status == 422 || e.status == 409) {
+            final rejected =
+                jsonDecode(prefs.getString('rejected.$userId') ?? '[]') as List;
+            rejected.add({...entry, 'error': e.message});
+            await prefs.setString('rejected.$userId', jsonEncode(rejected));
+            final latest =
+                jsonDecode(prefs.getString('pending.$userId') ?? '[]') as List;
+            latest.removeWhere((p) => p['id'] == entry['id']);
+            await prefs.setString('pending.$userId', jsonEncode(latest));
+            syncMessage =
+                'Сервер не принял результат: ${e.message}. Он остался в личной истории.';
+            continue;
+          }
+          syncMessage =
+              'Результат сохранён на телефоне. Отправим при подключении.';
+          break;
+        }
+      }
+    } finally {
+      _syncing = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
   RunRoute? active;
   RouteProgress? progress;
   bool running = false, busy = false, _disposed = false;
@@ -21,7 +119,7 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
   int _savedMillis = 0;
   Timer? _ticker;
   StreamSubscription<Position>? _positions;
-  ActivityController(this.routes, this.prefs, this.userId) {
+  ActivityController(this.routes, this.prefs, this.userId, {this.api}) {
     WidgetsBinding.instance.addObserver(this);
     final raw = prefs.getString('activity.$userId');
     if (raw != null) {
@@ -33,12 +131,18 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
           index: (j['index'] as int).clamp(0, active!.samples.length - 1),
         );
         _savedMillis = j['elapsed'];
+        attemptId = j['attempt_id'];
+        startedAt = DateTime.tryParse(j['started_at'] ?? '');
+        _trace = (j['trace'] as List? ?? [])
+            .map((p) => Map<String, dynamic>.from(p))
+            .toList();
         message = 'Прогресс сохранён. Продолжи с того же места.';
       } catch (_) {
         active = null;
         progress = null;
       }
     }
+    unawaited(sync());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (running) {
         notifyListeners();
@@ -97,10 +201,29 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
           'До ${active == null ? 'старта' : 'места продолжения'} ${distance.round()} м. Подойди к отмеченной точке на карте.',
         );
       }
+      if (active == null || active!.id != route.id) {
+        startedAt = fix.timestamp;
+        _trace = [];
+        attemptId = null;
+        if (api != null) {
+          message = 'Подтверждаем старт…';
+          notifyListeners();
+          try {
+            final ticket = await api!
+                .postData('/attempts', {'route_id': route.id})
+                .timeout(const Duration(seconds: 12));
+            attemptId = ticket['id'];
+          } catch (_) {
+            message = 'Старт без сети: это прохождение сохранится как личный результат.';
+          }
+        }
+        if (_disposed) return;
+        progress = RouteProgress(route);
+      }
       active = route;
       progress ??= RouteProgress(route);
       progress!.resetContinuity();
-      progress!.accept(point, fix.accuracy, fix.timestamp);
+      if (progress!.accept(point, fix.accuracy, fix.timestamp)) _record(fix);
       running = true;
       _clock.start();
       _positions =
@@ -112,10 +235,16 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
           ).listen(
             (fix) {
               if (!running) return;
+              if (_trace.isNotEmpty &&
+                  fix.timestamp.millisecondsSinceEpoch <=
+                      _trace.last['time_ms']) {
+                return;
+              }
               final point = GeoPoint(fix.latitude, fix.longitude);
               accuracy = fix.accuracy;
               if (progress!.accept(point, fix.accuracy, fix.timestamp)) {
                 location = point;
+                _record(fix);
                 message = null;
                 _persist();
               } else {
@@ -151,7 +280,8 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> finish() async {
-    if (active == null || progress?.complete != true) return;
+    if (busy || active == null || progress?.complete != true) return;
+    busy = true;
     pause();
     if (active!.walk) {
       await prefs.setBool('drawing.$userId.${active!.id}', true);
@@ -164,8 +294,40 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
         );
       }
     }
+    final finishedId = _uuid();
+    final local =
+        jsonDecode(prefs.getString('local_history.$userId') ?? '[]') as List;
+    local.insert(0, {
+      'id': finishedId,
+      'route_id': active!.id,
+      'route_name': active!.name,
+      'mode': active!.mode,
+      'elapsed_ms': elapsed.inMilliseconds,
+      'completed_at': DateTime.now().toUtc().toIso8601String(),
+    });
+    await prefs.setString(
+      'local_history.$userId',
+      jsonEncode(local.take(100).toList()),
+    );
+    if (api != null && _trace.length >= 10 && startedAt != null) {
+      final pending =
+          jsonDecode(prefs.getString('pending.$userId') ?? '[]') as List;
+      pending.add({
+        'id': finishedId,
+        'route_id': active!.id,
+        'attempt_id': attemptId,
+        'elapsed_ms': DateTime.now()
+            .difference(startedAt ?? DateTime.now())
+            .inMilliseconds,
+        'moving_ms': elapsed.inMilliseconds,
+        'trace': _trace,
+      });
+      await prefs.setString('pending.$userId', jsonEncode(pending));
+    }
     await discard();
-    message = 'Готово! Результат сохранён на этом устройстве.';
+    busy = false;
+    message = 'Готово! Результат сохранён. Отправляем в профиль…';
+    unawaited(sync());
     notifyListeners();
   }
 
@@ -175,6 +337,9 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
     progress = null;
     location = null;
     accuracy = null;
+    attemptId = null;
+    startedAt = null;
+    _trace = [];
     _clock.reset();
     _savedMillis = 0;
     message = null;
@@ -190,6 +355,9 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
           'route': active!.id,
           'index': progress!.index,
           'elapsed': elapsed.inMilliseconds,
+          'attempt_id': attemptId,
+          'started_at': startedAt?.toIso8601String(),
+          'trace': _trace,
         }),
       );
     }
@@ -197,6 +365,7 @@ class ActivityController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(sync());
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {

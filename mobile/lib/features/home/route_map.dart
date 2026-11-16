@@ -1,7 +1,14 @@
 import 'dart:convert';
+import 'dart:async';
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../core/theme.dart';
@@ -13,14 +20,18 @@ class RouteMap extends StatefulWidget {
   final double progress;
   final bool interactive;
   final bool active;
+  final bool running;
+  final double heading;
   final GeoPoint? user;
   const RouteMap({
     super.key,
     required this.route,
     required this.city,
     this.progress = 0,
-    this.interactive = false,
+    this.interactive = true,
     this.active = false,
+    this.running = false,
+    this.heading = 0,
     this.user,
   });
   @override
@@ -30,17 +41,37 @@ class RouteMap extends StatefulWidget {
 class _RouteMapState extends State<RouteMap> {
   MapLibreMapController? _map;
   bool _loaded = false;
+  Timer? _pulse;
+  double _phase = 0;
   late String _style;
   @override
   void initState() {
     super.initState();
     _style = makeStyle(widget.city, widget.route, active: widget.active);
+    _pulse = Timer.periodic(const Duration(milliseconds: 160), (_) async {
+      if (!_loaded || !widget.running || _map == null) return;
+      _phase = (_phase + .12) % 1;
+      try {
+        await _map!.setLayerProperties(
+          'user-glow',
+          CircleLayerProperties(
+            circleRadius: 12 + _phase * 16,
+            circleOpacity: (1 - _phase) * .4,
+          ),
+        );
+      } catch (_) {}
+    });
   }
 
   @override
   void didUpdateWidget(RouteMap old) {
     super.didUpdateWidget(old);
-    if (old.progress != widget.progress || old.user != widget.user) _update();
+    if (old.progress != widget.progress ||
+        old.user != widget.user ||
+        old.running != widget.running ||
+        old.heading != widget.heading) {
+      _update();
+    }
   }
 
   Map<String, dynamic> _line(List<GeoPoint> points) => {
@@ -69,7 +100,10 @@ class _RouteMapState extends State<RouteMap> {
           if (widget.user != null)
             {
               'type': 'Feature',
-              'properties': <String, dynamic>{},
+              'properties': <String, dynamic>{
+                'running': widget.running,
+                'heading': widget.heading,
+              },
               'geometry': {
                 'type': 'Point',
                 'coordinates': widget.user!.coordinates,
@@ -83,25 +117,75 @@ class _RouteMapState extends State<RouteMap> {
   }
 
   Future<void> _fit() async {
-    final p = widget.route.points;
-    await _map?.moveCamera(
-      CameraUpdate.newLatLngBounds(
-        LatLngBounds(
-          southwest: LatLng(
-            p.map((p) => p.lat).reduce(math.min),
-            p.map((p) => p.lon).reduce(math.min),
+    if (!mounted || !_loaded || _map == null) return;
+    try {
+      final p = widget.route.points;
+      await _map?.moveCamera(
+        CameraUpdate.newLatLngBounds(
+          LatLngBounds(
+            southwest: LatLng(
+              p.map((p) => p.lat).reduce(math.min),
+              p.map((p) => p.lon).reduce(math.min),
+            ),
+            northeast: LatLng(
+              p.map((p) => p.lat).reduce(math.max),
+              p.map((p) => p.lon).reduce(math.max),
+            ),
           ),
-          northeast: LatLng(
-            p.map((p) => p.lat).reduce(math.max),
-            p.map((p) => p.lon).reduce(math.max),
-          ),
+          left: 35,
+          right: 35,
+          top: 35,
+          bottom: 35,
         ),
-        left: 35,
-        right: 35,
-        top: 35,
-        bottom: 35,
-      ),
+      );
+    } on PlatformException catch (e) {
+      if (e.code != 'MAP_NOT_READY') rethrow;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse?.cancel();
+    _loaded = false;
+    _map = null;
+    super.dispose();
+  }
+
+  Future<void> _arrow() async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final path = Path()
+      ..moveTo(32, 3)
+      ..lineTo(55, 58)
+      ..lineTo(32, 46)
+      ..lineTo(9, 58)
+      ..close();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 5
+        ..strokeJoin = StrokeJoin.round,
     );
+    canvas.drawPath(path, Paint()..color = AdamTheme.orange);
+    final picture = recorder.endRecording();
+    final bitmap = await picture.toImage(64, 64);
+    final data = await bitmap.toByteData(format: ui.ImageByteFormat.png);
+    if (data != null && mounted) {
+      await _map?.addImage('direction-arrow', data.buffer.asUint8List());
+    }
+    bitmap.dispose();
+    picture.dispose();
+  }
+
+  Future<void> _zoom(double amount) async {
+    final camera = await _map?.queryCameraPosition();
+    if (camera != null) {
+      await _map?.animateCamera(
+        CameraUpdate.zoomTo((camera.zoom + amount).clamp(8, 20)),
+      );
+    }
   }
 
   @override
@@ -119,31 +203,67 @@ class _RouteMapState extends State<RouteMap> {
         ),
         onMapCreated: (m) => _map = m,
         onStyleLoadedCallback: () async {
+          if (!mounted) return;
           _loaded = true;
-          await _fit();
-          await _update();
+          try {
+            await _arrow();
+            await _fit();
+            await _update();
+          } on PlatformException catch (e) {
+            if (e.code != 'MAP_NOT_READY') rethrow;
+          }
         },
+        gestureRecognizers: widget.interactive
+            ? {
+                Factory<OneSequenceGestureRecognizer>(
+                  () => EagerGestureRecognizer(),
+                ),
+              }
+            : {},
+        minMaxZoomPreference: const MinMaxZoomPreference(8, 20),
         rotateGesturesEnabled: widget.interactive,
         scrollGesturesEnabled: widget.interactive,
         zoomGesturesEnabled: widget.interactive,
         tiltGesturesEnabled: false,
         compassEnabled: false,
         attributionButtonPosition: AttributionButtonPosition.bottomRight,
-        cameraTargetBounds: CameraTargetBounds(
-          LatLngBounds(
-            southwest: const LatLng(42.861, 74.594),
-            northeast: const LatLng(42.887, 74.621),
-          ),
-        ),
       ),
       if (widget.interactive)
         Positioned(
           right: 10,
           top: 10,
-          child: IconButton.filledTonal(
-            onPressed: _fit,
-            icon: const Icon(Icons.center_focus_strong),
-            tooltip: 'Весь маршрут',
+          child: Column(
+            children: [
+              IconButton.filledTonal(
+                onPressed: _fit,
+                icon: const Icon(Icons.route),
+                tooltip: 'Весь маршрут',
+              ),
+              const SizedBox(height: 4),
+              IconButton.filledTonal(
+                onPressed: () => _zoom(1),
+                icon: const Icon(Icons.add),
+                tooltip: 'Приблизить',
+              ),
+              const SizedBox(height: 4),
+              IconButton.filledTonal(
+                onPressed: () => _zoom(-1),
+                icon: const Icon(Icons.remove),
+                tooltip: 'Отдалить',
+              ),
+              if (widget.user != null) ...[
+                const SizedBox(height: 4),
+                IconButton.filledTonal(
+                  onPressed: () => _map?.animateCamera(
+                    CameraUpdate.newLatLng(
+                      LatLng(widget.user!.lat, widget.user!.lon),
+                    ),
+                  ),
+                  icon: const Icon(Icons.my_location),
+                  tooltip: 'Моя позиция',
+                ),
+              ],
+            ],
           ),
         ),
       Positioned(
@@ -157,7 +277,7 @@ class _RouteMapState extends State<RouteMap> {
           child: const Padding(
             padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
             child: Text(
-              '© OpenStreetMap',
+              'Офлайн · © OpenStreetMap / OpenMapTiles',
               style: TextStyle(fontSize: 10, color: AdamTheme.muted),
             ),
           ),
@@ -183,11 +303,16 @@ String makeStyle(
   return jsonEncode({
     'version': 8,
     'name': 'ADAM RUN Night',
+    if (city['glyphs'] != null) 'glyphs': city['glyphs'],
     'sources': {
       'city': {
-        'type': 'geojson',
-        'data': city,
-        'attribution': '© OpenStreetMap contributors',
+        if (city['type'] == 'vector')
+          ...Map<String, dynamic>.from(city)..remove('glyphs')
+        else ...{
+          'type': 'geojson',
+          'data': city,
+          'attribution': '© OpenStreetMap contributors',
+        },
       },
       'route': {'type': 'geojson', 'data': line(route.points)},
       'progress': {
@@ -227,77 +352,139 @@ String makeStyle(
         'type': 'background',
         'paint': {'background-color': '#0c1319'},
       },
-      {
-        'id': 'parks',
-        'type': 'fill',
-        'source': 'city',
-        'filter': [
-          '==',
-          ['get', 'kind'],
-          'park',
-        ],
-        'paint': {'fill-color': '#172e24', 'fill-outline-color': '#294438'},
-      },
-      {
-        'id': 'roads',
-        'type': 'line',
-        'source': 'city',
-        'filter': [
-          '==',
-          ['get', 'kind'],
-          'road',
-        ],
-        'paint': {
-          'line-color': '#394852',
-          'line-width': [
-            'match',
+      if (city['type'] == 'vector') ...[
+        {
+          'id': 'landcover',
+          'type': 'fill',
+          'source': 'city',
+          'source-layer': 'landcover',
+          'paint': {'fill-color': '#17291f', 'fill-opacity': .65},
+        },
+        {
+          'id': 'parks',
+          'type': 'fill',
+          'source': 'city',
+          'source-layer': 'park',
+          'paint': {'fill-color': '#1b3327', 'fill-outline-color': '#294736'},
+        },
+        {
+          'id': 'water',
+          'type': 'fill',
+          'source': 'city',
+          'source-layer': 'water',
+          'paint': {'fill-color': '#163641'},
+        },
+        {
+          'id': 'roads',
+          'type': 'line',
+          'source': 'city',
+          'source-layer': 'transportation',
+          'paint': {
+            'line-color': '#40505a',
+            'line-width': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              10,
+              .8,
+              16,
+              5,
+              19,
+              12,
+            ],
+          },
+        },
+        {
+          'id': 'road-centers',
+          'type': 'line',
+          'source': 'city',
+          'source-layer': 'transportation',
+          'paint': {
+            'line-color': '#22313b',
+            'line-width': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              10,
+              .4,
+              16,
+              3,
+              19,
+              8,
+            ],
+          },
+        },
+        {
+          'id': 'paths',
+          'type': 'line',
+          'source': 'city',
+          'source-layer': 'transportation',
+          'filter': [
+            '==',
             ['get', 'class'],
-            ['primary', 'secondary'],
-            6,
-            ['footway', 'path', 'pedestrian'],
-            1.5,
-            3,
+            'path',
           ],
+          'paint': {
+            'line-color': '#8b9694',
+            'line-width': 1,
+            'line-dasharray': [2, 2],
+          },
         },
-      },
-      {
-        'id': 'road-centers',
-        'type': 'line',
-        'source': 'city',
-        'filter': [
-          '==',
-          ['get', 'kind'],
-          'road',
-        ],
-        'paint': {
-          'line-color': '#1c2931',
-          'line-width': [
-            'match',
-            ['get', 'class'],
-            ['primary', 'secondary'],
-            4,
-            ['footway', 'path', 'pedestrian'],
-            .7,
-            1.5,
-          ],
+        {
+          'id': 'buildings',
+          'type': 'fill',
+          'source': 'city',
+          'source-layer': 'building',
+          'minzoom': 14,
+          'paint': {'fill-color': '#2b3a44', 'fill-outline-color': '#3b4b56'},
         },
-      },
-      {
-        'id': 'buildings',
-        'type': 'fill-extrusion',
-        'source': 'city',
-        'filter': [
-          '==',
-          ['get', 'kind'],
-          'building',
-        ],
-        'paint': {
-          'fill-extrusion-color': '#34424b',
-          'fill-extrusion-height': 9,
-          'fill-extrusion-base': 0,
-          'fill-extrusion-opacity': .8,
+        {
+          'id': 'street-labels',
+          'type': 'symbol',
+          'source': 'city',
+          'source-layer': 'transportation_name',
+          'minzoom': 13,
+          'layout': {
+            'symbol-placement': 'line',
+            'text-field': [
+              'coalesce',
+              ['get', 'name:ru'],
+              ['get', 'name'],
+              '',
+            ],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': 11,
+            'text-max-angle': 30,
+          },
+          'paint': {
+            'text-color': '#b5c1c8',
+            'text-halo-color': '#10191f',
+            'text-halo-width': 2,
+          },
         },
-      },
+        {
+          'id': 'place-labels',
+          'type': 'symbol',
+          'source': 'city',
+          'source-layer': 'place',
+          'maxzoom': 14,
+          'layout': {
+            'text-field': [
+              'coalesce',
+              ['get', 'name:ru'],
+              ['get', 'name'],
+              '',
+            ],
+            'text-font': ['Noto Sans Regular'],
+            'text-size': 14,
+          },
+          'paint': {
+            'text-color': '#c0ced3',
+            'text-halo-color': '#10191f',
+            'text-halo-width': 2,
+          },
+        },
+      ],
       {
         'id': 'route-shadow',
         'type': 'line',
@@ -369,6 +556,11 @@ String makeStyle(
       },
       {
         'id': 'user-point',
+        'filter': [
+          '!=',
+          ['get', 'running'],
+          true,
+        ],
         'type': 'circle',
         'source': 'user',
         'paint': {
@@ -376,6 +568,24 @@ String makeStyle(
           'circle-color': '#bbecff',
           'circle-stroke-color': '#3987bc',
           'circle-stroke-width': 2,
+        },
+      },
+      {
+        'id': 'user-arrow',
+        'type': 'symbol',
+        'source': 'user',
+        'filter': [
+          '==',
+          ['get', 'running'],
+          true,
+        ],
+        'layout': {
+          'icon-image': 'direction-arrow',
+          'icon-size': .5,
+          'icon-rotate': ['get', 'heading'],
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
         },
       },
     ],

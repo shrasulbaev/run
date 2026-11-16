@@ -36,9 +36,9 @@ if health.get('status') != 'ok' or health.get('environment') != 'demo' or health
     parser.error('The endpoint is not the healthy ADAM RUN demo API.')
 subprocess.run([
     args.flutter, 'build', 'apk', '--release',
-    '--build-number=2', f'--dart-define=API_BASE_URL={api_url}',
+    '--build-number=3', f'--dart-define=API_BASE_URL={api_url}',
 ], cwd=root / 'mobile', check=True)
-output = root / 'artifacts/adam-run-1.0.0-demo.apk'
+output = root / 'artifacts/adam-run-1.1.0-demo.apk'
 output.parent.mkdir(exist_ok=True)
 shutil.copy2(root / 'mobile/build/app/outputs/flutter-apk/app-release.apk', output)
 checksum = hashlib.sha256(output.read_bytes()).hexdigest()

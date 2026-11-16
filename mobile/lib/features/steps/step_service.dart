@@ -53,7 +53,7 @@ class StepService extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     await refresh();
     if (_disposed) return;
-    _timer = Timer.periodic(const Duration(seconds: 15), (_) => refresh());
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) => refresh());
   }
 
   Future<void> refresh({bool request = false}) async {
